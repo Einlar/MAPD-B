@@ -1,0 +1,226 @@
+---
+jupyter:
+  jupytext:
+    text_representation:
+      extension: .Rmd
+      format_name: rmarkdown
+      format_version: '1.2'
+      jupytext_version: 1.3.2
+  kernelspec:
+    display_name: Python 3
+    language: python
+    name: python3
+---
+
+# Redundancy
+
+
+We are programming a file based **RAID-4** software algorithm. For this purpose we are converting a single input file (`raid4.input`) into four *data* files:
+- `raid4.0`
+- `raid4.1`
+- `raid4.2`
+- `raid4.3`
+
+and one *parity* file:
+- `raid4.4`
+The four data and one parity files are called *stripe files*.
+
+The input file can be downloaded from: [http://apeters.web.cern.ch/apeters/pd2020/raid4.input](http://apeters.web.cern.ch/apeters/pd2020/raid4.input)
+
+```{python}
+import os
+import errno
+import requests
+
+try:
+    os.makedirs("data")
+except OSError as e:
+    if e.errno != errno.EEXIST:
+        raise
+
+url = 'http://apeters.web.cern.ch/apeters/pd2020/raid4.input'
+r = requests.get(url, allow_redirects=True)
+
+file_size = open("data/raid4.input", "wb").write(r.content)
+print("Downloaded {} bytes".format(file_size))
+```
+
+## Compute the stripe files
+The procedure is as follows:
+- Read 4 bytes from `raid4.input`, and sequentially write each one of them into one of the four files `raid4.0`, `raid4.1`, `raid4.2` and `raid4.3`. The parity of the four bytes is then computed and written in the fifth file (`raid4.4`)
+- The previous operation is repeated until the file ends, eventually adding some 0 padding to the tail of `raid4.input` if it does not contain a number of bytes divisible by $4$.
+
+```{python}
+import numpy as np
+import operator
+from functools import reduce
+
+#Create output folder
+try:
+    os.makedirs("output")
+except OSError as e:
+    if e.errno != errno.EEXIST:
+        raise
+
+#Create output files
+N = 4 #RAID-4
+file_names = ["output/raid{:1d}.{:d}".format(N, a) for a in range(N+1)]
+files = [open(filename, "wb") for filename in file_names]
+
+#Write data
+with open("data/raid4.input", "rb") as f:
+    block = f.read(N)
+    
+    while block:
+        block += b'\0' * (N - len(block)) #Pad if necessary
+
+        parity = reduce(operator.xor, block, 0)
+        
+        #by default, elements of a bytes object are integers in [0,255]
+        #(See https://docs.python.org/3.1/library/stdtypes.html#sequence-types-str-bytes-bytearray-list-tuple-range)
+        #So a casting to byte is needed when writing
+        for i in range(N):
+            files[i].write(block[i].to_bytes(1, byteorder='big'))
+
+        files[-1].write(parity.to_bytes(1, byteorder='big'))
+        
+        block = f.read(N) #Read the next block
+
+#Close files
+for file in files:
+    file.close()
+```
+
+## Stripe files parity
+The program is extended to compute also the **parity** of all bytes within one stripe file, which acts as a **checksum** for each stripe file. This adds a total of $4+1$ bytes to the total stripe files size. Since the row-wise parities (i.e. the contents of `raid4.4`) occupy an additional $\lceil$SIZE$/4\rceil$, where SIZE is the number of bytes in the original file, the theoretical overhead of the RAID-4 algorithm is:
+
+$$\mathrm{Overheaf} = \frac{\mathrm{SIZE}/4 + 5}{\mathrm{SIZE}} = \frac{1}{4} + \frac{5}{\mathrm{SIZE}} $$
+
+Since usually $\mathrm{SIZE} \gg 5$, we expect an overhead of $25\%$.
+
+```{python}
+files = [open(filename, "rb") for filename in file_names]
+sizes = [os.path.getsize(filename) for filename in file_names]
+
+parity_values = []
+
+for file in files:
+    parity = 0
+    byte = file.read(1)
+    
+    while byte:
+        parity ^= byte[0]
+        byte = file.read(1)
+    
+    file.close()
+    
+    parity_values.append('{:02x}'.format(parity))
+    
+    print("Parity of {} is 0x{:02x}".format(file.name, parity))
+    
+overhead = (sum(sizes) / file_size - 1) * 100
+print("Overhead: {:.2f}%".format(overhead))
+```
+
+## 5-byte parity value
+The $5$-byte parity value $P^5 = $0x[q0][q1][q2][q3][q4], where [qx] are the hexadecimal parity bytes computed by *xor-ing* all bytes in each stripe file is given by:
+
+```{python}
+print("5-byte parity values is: 0x" + ''.join(parity_values))
+```
+
+## Row-wise parities
+If you create a sixth stripe file, which contains the row-wise parities of the five stripe files, what would be the contents of this file?
+
+Since the last stripe file (`raid4.4` in this case) contains the row-wise parities of the other stripe files, the new file would only contain zeros. In fact, let $a_i^{(j)}$ be the $i$-th byte of `raid4.j`, and $p_i$ the $i$-th byte of `raid4.4`. By construction, we have:
+
+$$p_i = \bigoplus_{j=0}^{N-1} a_i^{(j)}$$
+
+with $N=4$ in this case.
+So the $i$-th byte $f_i$ of the new stripe file would be computed as:
+
+$$ f_i = \bigoplus_{j=0}^{N-1} a_i^{(j)} \oplus p_i = \bigoplus_{j=0}^{N-1} a_i^{(j)} + \bigoplus_{j=0}^{N-1} a_i^{(j)} = 0 \>\>\> \forall i$$ 
+
+since always $a \oplus a = 0$.
+
+```{python}
+#Let's validate this result
+files = [open(filename, "rb") for filename in file_names]
+
+assert len(set(sizes)) == 1 #All files should be of same size
+
+stripe_size = sizes[0]
+
+with open("output/additional_stripe", "wb") as out:
+    for i in range(stripe_size):
+        a = 0
+        for file in files:
+            a ^= file.read(1)[0]
+        
+        out.write(a.to_bytes(1, byteorder="big"))
+
+for file in files:
+    file.close()  
+```
+
+```{python}
+#As expected, all bytes are zero:
+
+with open("output/additional_stripe", "rb") as out:
+    print("First 10 bytes: ", out.read(10))
+    
+    out.seek(stripe_size - 10)
+    print("Last 10 bytes: ", out.read(10))
+```
+
+## Data reconstruction
+After some time you recompute the $5$-byte parity value as in 1.3. Now the result is $P^5 = $ 0xff 0x07 0xa0 0x9b 0x99.
+Something has been corrupted. You want to reconstruct the original file `raid4.input` using the $5$ stripe files. Describe how you can recreate the original data file. Which stripe files do you use and how do you recreate the original data file?
+Why could it be useful to store also the file size somewhere?
+
+
+
+
+We start by comparing the new parity to the previous one:
+
+|          | 0  | 1  | 2  | 3  | 4  |
+|----------|----|----|----|----|----|
+| Previous | **a5** | 07 | a0 | 9b | 99 |
+|  Current | **ff** | 07 | a0 | 9b | 99 |
+
+The only difference lies in the parity of `raid4.0`. This means that a corruption has happened in the first stripe file, while it is unlikely that anything has changed in the other files (since that would require all *random* errors to "perfectly cancel out" in the parities). So we can use `raid4.1`, `raid4.2`, `raid4.3` and `raid4.4` to reconstruct `raid4.0`. Let $a_i^{(j)}$ be the $i$-th byte of `raid4.j`. 
+
+We can compute $a_i^{(0)}$ as follows:
+
+$$a_i^{(0)} =  a_i^{(4)} \oplus a_i^{(1)} \oplus a_i^{(2)} \oplus a_i^{(3)}$$
+
+In fact, we know that, by construction:
+
+$$a_i^{(4)} = a_i^{(0)} \oplus  a_i^{(1)} \oplus a_i^{(2)} \oplus a_i^{(3)} $$
+
+And so, since the XOR operation is both associative and commutative (and dropping the $i$ index for simplicity):
+
+$$(a^{(0)} \oplus  a^{(1)} \oplus a^{(2)} \oplus a^{(3)}) \oplus a^{(1)} \oplus a^{(2)} \oplus a^{(3)} = a^{(0)} \oplus (a^{(1)} \oplus a^{(1)}) \oplus (a^{(2)} \oplus a^{(2)}) \oplus (a^{(3)} \oplus a^{(3)}) = a^{(0)} \oplus 0 \oplus 0 \oplus 0 = a_0 $$
+which proves the formula for $a_i^{(0)}$.
+
+```{python}
+#Let's again validate this result in practice
+files = [open(filename, "rb") for filename in file_names]
+
+for i in range(stripe_size):
+    parity = 0
+    
+    for file in files[1:]: #Exclude the first stripe file
+        parity ^= file.read(1)[0]
+        
+    #Compare with the first file "true" value
+    byte = files[0].read(1)[0]
+    if parity != byte:
+        print("Error in reconstruction!")
+        break
+        
+for file in files:
+    file.close()  
+
+#Since this cell does not raise any error, the reconstruction algorithm is proved to be effective.
+```
