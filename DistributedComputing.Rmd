@@ -34,7 +34,106 @@ $$ \mathrm{c}(w) = \sum_{k=1}^n \mathrm{cp}_k(w)$$
 <!-- #endregion -->
 
 ```{python}
+from dask.distributed import Client
 
+client = Client()
+```
+
+```{python}
+import dask.bag as db
+import os
+import json
+
+PATH = os.path.join('data', 'papers_in_json', '*.json')
+
+js = db.read_text(PATH).map(json.loads)
+```
+
+```{python}
+js = js.repartition(100)
+```
+
+```{python}
+#string = ''.join([a['text'] for a in data['body_text']])
+
+def joiner(paper):
+    return ''.join([paragraph['text'] for paragraph in paper['body_text']])
+```
+
+```{python}
+# Unire text in body-text
+# Rimuovere punteggiatura etc.
+# Contare parole (parola, conto)
+import glob 
+
+filename = glob.glob(PATH)[0]
+
+with open(filename) as f:
+    data = json.loads(f.read())
+
+string = ' '.join([a['text'] for a in data['body_text']]) 
+```
+
+```{python}
+import re
+
+citations = re.compile('\[[\d]+\]')
+numbers = re.compile('((^|\s)[\d]+)')
+fixpoints = re.compile('([\.,:?;!](?=\w))')
+urls = re.compile('(http(s)?:\/\/.)?(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#?&//=]*)')
+pattern = re.compile('[^a-zA-Z\d\s]')
+spaces = re.compile('\s([\s]+)')
+#Remove url
+
+def sanitize_string(s):
+    sanitized_string = s.lower()
+    sanitized_string = urls.sub('', sanitized_string)
+    sanitized_string = citations.sub('', sanitized_string)
+    sanitized_string = fixpoints.sub(' ', sanitized_string)
+    sanitized_string = pattern.sub('', sanitized_string)
+    sanitized_string = numbers.sub('', sanitized_string)
+    sanitized_string = spaces.sub('', sanitized_string)
+    
+    return sanitized_string
+
+s = sanitize_string(string)
+```
+
+```{python}
+def count_words(s):
+    wordlist = {}
+    
+    for word in s.split():
+        if word in wordlist:
+            wordlist[word] += 1
+        else:
+            wordlist[word] = 1
+        
+    return wordlist
+```
+
+```{python}
+js = js.map(joiner)
+js = js.map(sanitize_string).map(count_words)
+```
+
+```{python}
+def merge_dictionaries(x, y):
+    return {k: x.get(k, 0) + y.get(k, 0) for k in set(x) | set(y)}
+    
+reduction = js.fold(binop=merge_dictionaries, combine=merge_dictionaries)
+```
+
+```{python}
+js
+```
+
+```{python}
+a = reduction.compute() #Fix error of plasmodium, should be 53 or 52
+```
+
+```{python}
+a['plasmodium']
 ```
 
 ## Worst and Best represented Countries
@@ -43,6 +142,70 @@ $$ \mathrm{c}(w) = \sum_{k=1}^n \mathrm{cp}_k(w)$$
 2. Even in this case, do multiple runs by changing the *number of partitions* and *workers* and then describe the behaviour of the timings.
 
 ```{python}
+PATH = os.path.join('data', 'papers_in_json', '*.json')
+
+js = db.read_text(PATH).map(json.loads)
+
+#metadata => authors => affiliation => location => country
+
+def reformat(paper):
+    metadata = paper['metadata'] #dictionary
+    
+    dataframe = []
+    
+    for author in metadata['authors']:
+#         affiliations = author['affiliation']
+        
+#         if type(affiliations) is not list:
+#             affiliations = list(affiliations)
+        
+        #for a in affiliations:
+        a = author['affiliation']
+        
+        try:
+            country = a['location']['country']
+        except KeyError:
+            country = 'Missing'
+        
+        try:
+            institution = a['institution']
+        except KeyError:
+            institution = 'Missing'
+            
+        dataframe.append(
+            {
+                'id' : paper['paper_id'],
+                'author' : author['first'] + ' ' + author['last'],
+                'country' : country,
+                'institution' : institution
+            }
+        )
+    
+    return dataframe
+
+
+#Nota: se la key c'è ma è vuota, metter Missing
+
+authors = js.map(reformat).flatten().to_dataframe()
+```
+
+```{python}
+authors.groupby('country').author.count().compute() #Solve the many Missing
+```
+
+```{python}
+authors.groupby('institution').author.count().compute()
+```
+
+```{python}
+#TO DO
+# Gridsearch per i primi due punti => + Plot # Bea
+# Plot (parole più frequenti, countries and institutions with more papers) # Marco
+# Sistemare il grande numero di Missing, dovuto a diverse convenzioni # Marco
+# nested try except # Marco
+# Aggiungere commenti vari
+
+#Terzo punto #Fra
 
 ```
 
