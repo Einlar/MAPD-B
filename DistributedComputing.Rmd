@@ -1,0 +1,90 @@
+---
+jupyter:
+  jupytext:
+    formats: ipynb,Rmd
+    text_representation:
+      extension: .Rmd
+      format_name: rmarkdown
+      format_version: '1.2'
+      jupytext_version: 1.4.1
+  kernelspec:
+    display_name: Python 3
+    language: python
+    name: python3
+---
+
+## Word Counter
+
+<!-- #region -->
+First of all, you have to implement the following distributred algorithm to *count* the occurrences of all the words inside a list of documents. In NLP (Natural Language Processing) a document is a text; in this case, each paper is a document.
+
+The algorithm is defined as follows:
+
+- **Map phase**: For each document $D_i$, produce the set of intermediate pairs $(w, \mathrm{cp}_i(w))$, one for each word $w \in D_i$, where $\mathrm{cp}_i(w)$ is the number of occurrences of $w$ in $D_i$. E.g. $('\mathrm{hello}', 3)$.
+- **Reduce phase**: For each word $w$, gather all the previous pairs $(w, \mathrm{cp}_i(w))$ and return the final pair $(w, \mathrm{c}(w))$ where $\mathrm{c}(w)$ is the number of occurrences of $w$ for all the documents. In other words:
+$$ \mathrm{c}(w) = \sum_{k=1}^n \mathrm{cp}_k(w)$$
+
+
+1. The algorithm has to be run on the **full-text** of the papers. To get the full text of a paper you have to transform the input data by concatenating the strings contained in the *body-text* fields of the JSON. To perform this transformation I strongly suggest you use the Bag data-structure of DASK. Anyway, if you prefer to implement the algorithm by using the DataFrame structure feel free to do it.
+
+2. The algorithm has to be run several times by changing the *number of workers* and the *number of partitions*. For each run the **execution time** must be registered. Provide a comment on how the computation time over the cluster varies by changing the number of partitions/workers. You have to try with at least $6$ different partition numbers.
+
+3. At the end of the algorithm, analyze the **top words** and see how they are related to viruses and research (for example create a barplot of the top words).
+
+<!-- #endregion -->
+
+```{python}
+
+```
+
+## Worst and Best represented Countries
+1. In this part you have to take the documents and convert them in a usable *DataFrame* data structure in order to figure out the countries that are most and less active in the research. To do this you can use the country of the authors. Do the same for the universities (affiliations).
+
+2. Even in this case, do multiple runs by changing the *number of partitions* and *workers* and then describe the behaviour of the timings.
+
+```{python}
+
+```
+
+## Embedding for the title of the papers
+In NLP a common technique to perform analysis over a set of texts is to transform the text into a set of vectors, each one representing a word inside a document. At the end of the pre-processing, the document will be transformed into a list of vectors, or a matrix $n\times m$ where $n$ is the number of words in the document and $m$ is the size of the vector that represents each word. More information about word-embedding: https://towardsdatascience.com/introductionto-word-embedding-and-word2vec-652d0c2060fa
+
+What you can do is to transform the **title** of each paper into its embedding version by using the pre-trained model available on the FastText page: https://fasttext.cc/docs/en/pretrainedvectors.html.
+The pre-trained model that you have to download is the https://dl.fbaipublicfiles.com/fasttext/vectorswiki/wiki.en.vec
+
+Basically the pre-trained model is more or less a huge dictionary in the following format `key: vector`. 
+
+To load the model, follow the snippet of code which is slightly different from what you can find at this page: https://fasttext.cc/docs/en/english-vectors.html
+
+```{python}
+import io
+
+def load_vectors(fname):
+    fin = io.open(fname, ’r’, encoding=’utf-8’, newline=’\n’, errors=’ignore’)
+    n, d = map(int, fin.readline().split())
+    data = {}
+    
+    for line in fin:
+        tokens = line.rstrip().split(’ ’)
+        data[tokens[0]] = list(map(float, tokens[1:]))
+        return data
+
+model = load_vectors(’wiki.en.vec’)
+
+#to get the embedding of word ’hello’:
+
+model[’hello’]
+```
+
+Once you have downloaded the model, use the map approach to create a DataFrame or a Bag that is composed by:
+- `paper-id`
+- `title-embedding`
+
+The title embedding can be a list of vectors or can be flattened to a large vector.
+
+**Bonus point**
+Use the previously generated vectors to compute the **cosine similarity** between each paper and to figure out a couple of papers with the highest cosine similairty score. This point is a bonus/optional point.
+
+```{python}
+
+```
