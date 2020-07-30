@@ -1,0 +1,162 @@
+---
+jupyter:
+  jupytext:
+    formats: ipynb,Rmd
+    text_representation:
+      extension: .Rmd
+      format_name: rmarkdown
+      format_version: '1.2'
+      jupytext_version: 1.4.1
+  kernelspec:
+    display_name: Python 3
+    language: python
+    name: python3
+---
+
+## Embedding for the title of the papers
+In NLP a common technique to perform analysis over a set of texts is to transform the text into a set of vectors, each one representing a word inside a document. At the end of the pre-processing, the document will be transformed into a list of vectors, or a matrix $n\times m$ where $n$ is the number of words in the document and $m$ is the size of the vector that represents each word. More information about word-embedding: https://towardsdatascience.com/introductionto-word-embedding-and-word2vec-652d0c2060fa
+
+What you can do is to transform the **title** of each paper into its embedding version by using the pre-trained model available on the FastText page: https://fasttext.cc/docs/en/pretrainedvectors.html.
+The pre-trained model that you have to download is the https://dl.fbaipublicfiles.com/fasttext/vectorswiki/wiki.en.vec
+
+Basically the pre-trained model is more or less a huge dictionary in the following format `key: vector`. 
+
+To load the model, follow the snippet of code which is slightly different from what you can find at this page: https://fasttext.cc/docs/en/english-vectors.html
+
+```{python}
+import io
+from tqdm.notebook import tqdm
+import numpy as np
+
+def load_wordlist(fname):
+    
+    words = {}
+    
+    with io.open(fname, 'r', encoding='utf-8', newline='\n', errors='ignore') as fin:
+        n, d = map(int, fin.readline().split())
+        # n = number of words
+        # d = vector dimension
+        
+        embeddings = np.zeros((n, d), dtype=np.float32)
+        
+        with tqdm(total=n) as pbar:
+            for i, line in enumerate(fin):
+                tokens = line.rstrip().split(' ')
+                words[tokens[0]] = i
+                embeddings[i, :] = np.array(tokens[1:], dtype=np.float32) 
+                
+                pbar.update(1)
+                
+        return words, embeddings
+```
+
+```{python}
+path_to_model = "/media/einlar/Windows/JDownloads/"
+wordlist, embeddings = load_wordlist(path_to_model + 'wiki.en.vec')
+```
+
+Once you have downloaded the model, use the map approach to create a DataFrame or a Bag that is composed by:
+- `paper-id`
+- `title-embedding`
+
+The title embedding can be a list of vectors or can be flattened to a large vector.
+
+**Bonus point**
+
+Use the previously generated vectors to compute the **cosine similarity** between each paper and to figure out a couple of papers with the highest cosine similarity score. This point is a bonus/optional point.
+
+```{python}
+from dask.distributed import Client
+import dask.bag as db
+import os
+import json
+
+client = Client()
+client
+```
+
+```{python}
+PATH = os.path.join('data', 'papers_in_json', '*.json')
+
+js = db.read_text(PATH).map(json.loads)
+```
+
+```{python}
+#Parse words with nltk to remove plurals
+```
+
+```{python}
+embeddings.shape
+```
+
+```{python}
+import re
+from nltk.corpus import stopwords
+
+
+citations = re.compile('\[[\d]+\]')
+numbers = re.compile('((^|\s)[\d]+)')
+fixpoints = re.compile('([\.,:?;!](?=\w))')
+urls = re.compile('(http(s)?:\/\/.)?(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#?&//=]*)')
+pattern = re.compile('[^a-zA-Z\d\s]')
+spaces = re.compile('\s([\s]+)')
+
+
+
+def sanitize_string(s):
+    # Transform all capital letters in lower letters
+    sanitized_string = s.lower()
+    # Remove urls
+    sanitized_string = urls.sub('', sanitized_string)
+    # Remove citations of the type [x] where x is a number
+    sanitized_string = citations.sub('', sanitized_string)
+    # Insert spacing after puntuations 
+    sanitized_string = fixpoints.sub(' ', sanitized_string)
+    # Remove puntuation
+    sanitized_string = pattern.sub('', sanitized_string)
+    # Remove single numbers
+    sanitized_string = numbers.sub('', sanitized_string)
+    # Remove multiple spacing
+    sanitized_string = spaces.sub('', sanitized_string)
+    
+    return sanitized_string
+
+d = 300 #dimension of vectors (read from file)
+def get_embedding(title):
+    words = title.split()
+    num_words = len(words)
+    
+    title_embedding = []
+    
+    for i, word in enumerate(title):
+        word_index = wordlist.get(word, -1)
+        
+        if word_index != -1:
+            title_embedding.append(embeddings[word_index])
+    
+    return np.array(title_embedding)
+
+```
+
+```{python}
+def extract_title_embeddings(paper):
+    title = sanitize_string(paper['metadata']['title'])
+    
+    return {'paper_id' : paper['paper_id'], 'title-embedding' : get_embedding(title)}
+```
+
+```{python}
+titles = js.map(extract_title_embeddings)
+```
+
+```{python}
+titles.take(1)
+```
+
+```{python}
+# Bonus point missing
+```
+
+```{python}
+
+```
