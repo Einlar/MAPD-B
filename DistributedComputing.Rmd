@@ -6,7 +6,7 @@ jupyter:
       extension: .Rmd
       format_name: rmarkdown
       format_version: '1.2'
-      jupytext_version: 1.4.1
+      jupytext_version: 1.5.2
   kernelspec:
     display_name: Python 3
     language: python
@@ -35,8 +35,13 @@ $$ \mathrm{c}(w) = \sum_{k=1}^n \mathrm{cp}_k(w)$$
 
 ```{python}
 from dask.distributed import Client
+import bokeh.palettes as palette
 
 client = Client()
+```
+
+```{python}
+client
 ```
 
 ```{python}
@@ -75,7 +80,17 @@ string = ' '.join([a['text'] for a in data['body_text']])
 ```
 
 ```{python}
+# Needed first time you use nltk
+#import nltk as nlt
+#nlt.download('stopwords')
+```
+
+```{python}
 import re
+from nltk.corpus import stopwords
+
+rm_word = ['also', 'may', 'et' , 'using', 'used', 'al', 'two', 'one', 'e', 'could', 'use']
+stopw = stopwords.words('english') + rm_word
 
 citations = re.compile('\[[\d]+\]')
 numbers = re.compile('((^|\s)[\d]+)')
@@ -83,16 +98,27 @@ fixpoints = re.compile('([\.,:?;!](?=\w))')
 urls = re.compile('(http(s)?:\/\/.)?(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#?&//=]*)')
 pattern = re.compile('[^a-zA-Z\d\s]')
 spaces = re.compile('\s([\s]+)')
-#Remove url
+stop_words = re.compile(r'\b(' + r'|'.join(stopw) + r')\b\s*')
+
+
 
 def sanitize_string(s):
+    # Transform all capital letters in lower letters
     sanitized_string = s.lower()
+    # Remove urls
     sanitized_string = urls.sub('', sanitized_string)
+    # Remove citations of the type [x] where x is a number
     sanitized_string = citations.sub('', sanitized_string)
+    # Insert spacing after puntuations 
     sanitized_string = fixpoints.sub(' ', sanitized_string)
+    # Remove puntuation
     sanitized_string = pattern.sub('', sanitized_string)
+    # Remove single numbers
     sanitized_string = numbers.sub('', sanitized_string)
+    # Remove multiple spacing
     sanitized_string = spaces.sub('', sanitized_string)
+    # Removing stopwords or words that aren't interesting to the analysis
+    sanitized_string = stop_words.sub('', sanitized_string)
     
     return sanitized_string
 
@@ -125,15 +151,30 @@ reduction = js.fold(binop=merge_dictionaries, combine=merge_dictionaries)
 ```
 
 ```{python}
-js
-```
-
-```{python}
 a = reduction.compute() #Fix error of plasmodium, should be 53 or 52
 ```
 
 ```{python}
-a['plasmodium']
+words_count = {k: v for k, v in sorted(a.items(), key=lambda item: item[1], reverse=True)}
+```
+
+```{python}
+import matplotlib.pyplot as plt
+from itertools import islice
+
+# Present the first 10 words
+idx = 10
+
+best_words = dict( islice(words_count.items(), idx))
+
+f, ax = plt.subplots(figsize=(12, 6))
+
+ax.barh(list(best_words.keys())[::-1], list(best_words.values())[::-1], 
+        color=palette.cividis(idx) )
+ax.set_xlabel('Total')
+ax.set_title('Most present words in the text')
+
+plt.show()
 ```
 
 ## Worst and Best represented Countries
@@ -154,24 +195,30 @@ def reformat(paper):
     dataframe = []
     
     for author in metadata['authors']:
-#         affiliations = author['affiliation']
-        
-#         if type(affiliations) is not list:
-#             affiliations = list(affiliations)
-        
-        #for a in affiliations:
+
         a = author['affiliation']
         
         try:
             country = a['location']['country']
+            if  len(country)==0: # When country = {}
+                country = 'Missing'
         except KeyError:
-            country = 'Missing'
+            try: # Try different position of the country
+                country = a['location']['region']
+            except KeyError:
+                try:
+                    country = a['location']['settlements']
+                except KeyError:
+                    country = 'Missing'
         
         try:
             institution = a['institution']
+            if  len(institution)==0: # When institution = {}
+                institution = 'Missing'
         except KeyError:
             institution = 'Missing'
             
+        # We only store the informations that are interesting for our analysis
         dataframe.append(
             {
                 'id' : paper['paper_id'],
@@ -184,25 +231,56 @@ def reformat(paper):
     return dataframe
 
 
-#Nota: se la key c'è ma è vuota, metter Missing
-
 authors = js.map(reformat).flatten().to_dataframe()
 ```
 
 ```{python}
-authors.groupby('country').author.count().compute() #Solve the many Missing
+# Group by country and then count. We select the author column aribitrarly, to have just
+# a single-column serie
+countries = authors.groupby('country').author.count().compute() 
+sorted_countries = countries.sort_values(ascending=False) # Sorting in descending order
 ```
 
 ```{python}
-authors.groupby('institution').author.count().compute()
+f, ax = plt.subplots(figsize=(12, 6))
+idx = 10
+
+ax.barh(sorted_countries.index[idx:0:-1], sorted_countries.values[idx:0:-1],
+        color=palette.cividis(idx) )
+ax.set_xlabel('Total')
+ax.set_title('Countries that published most papers')
+
+plt.show()
+```
+
+```{python}
+# Group by institution and then count. We select the author column aribitrarly, 
+#to have just a single-column serie
+
+universities = authors.groupby('institution').author.count().compute()
+sorted_uni = universities.sort_values(ascending=False) # Sorting in descending order
+```
+
+```{python}
+f, ax = plt.subplots(figsize=(12, 6))
+
+idx = 10
+
+ax.barh(sorted_uni.index[idx:0:-1], sorted_uni.values[idx:0:-1],
+        color=palette.viridis(idx) )
+ax.set_xlabel('Total')
+ax.set_title('Universities that published most papers')
+
+plt.show()
 ```
 
 ```{python}
 #TO DO
 # Gridsearch per i primi due punti => + Plot # Bea
-# Plot (parole più frequenti, countries and institutions with more papers) # Marco
-# Sistemare il grande numero di Missing, dovuto a diverse convenzioni # Marco
-# nested try except # Marco
+# Plot (parole più frequenti, countries and institutions with more papers) # DONE
+# Sistemare il grande numero di Missing, dovuto a diverse convenzioni # 
+# nested try except # DONE (Ancora un sacco di missing ma se i ricercatori son stupidi e 
+# non scrivono da dove vengono se lo meritano)
 # Aggiungere commenti vari
 
 #Terzo punto #Fra
