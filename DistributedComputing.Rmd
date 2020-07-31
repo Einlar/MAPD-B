@@ -6,7 +6,7 @@ jupyter:
       extension: .Rmd
       format_name: rmarkdown
       format_version: '1.2'
-      jupytext_version: 1.5.2
+      jupytext_version: 1.4.1
   kernelspec:
     display_name: Python 3
     language: python
@@ -34,21 +34,40 @@ $$ \mathrm{c}(w) = \sum_{k=1}^n \mathrm{cp}_k(w)$$
 <!-- #endregion -->
 
 ```{python}
-from dask.distributed import Client
-import bokeh.palettes as palette
+from dask.distributed import Client, LocalCluster
+import dask.bag as db
 
-client = Client()
+import os
+import json
+import glob 
+
+# Needed first time you use nltk
+# import nltk as nlt
+# nlt.download('stopwords')
+import re
+from nltk.corpus import stopwords
+
+import matplotlib.pyplot as plt
+import bokeh.palettes as palette
+import seaborn as sn
+import pandas as pd
+
+from itertools import islice
+import time 
+import numpy as np
+
+import warnings
+warnings.filterwarnings('ignore')
+
+import io
 ```
 
 ```{python}
+client = Client()
 client
 ```
 
 ```{python}
-import dask.bag as db
-import os
-import json
-
 PATH = os.path.join('data', 'papers_in_json', '*.json')
 
 js = db.read_text(PATH).map(json.loads)
@@ -69,7 +88,6 @@ def joiner(paper):
 # Unire text in body-text
 # Rimuovere punteggiatura etc.
 # Contare parole (parola, conto)
-import glob 
 
 filename = glob.glob(PATH)[0]
 
@@ -80,15 +98,6 @@ string = ' '.join([a['text'] for a in data['body_text']])
 ```
 
 ```{python}
-# Needed first time you use nltk
-#import nltk as nlt
-#nlt.download('stopwords')
-```
-
-```{python}
-import re
-from nltk.corpus import stopwords
-
 rm_word = ['also', 'may', 'et' , 'using', 'used', 'al', 'two', 'one', 'e', 'could', 'use']
 stopw = stopwords.words('english') + rm_word
 
@@ -99,7 +108,6 @@ urls = re.compile('(http(s)?:\/\/.)?(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]
 pattern = re.compile('[^a-zA-Z\d\s]')
 spaces = re.compile('\s([\s]+)')
 stop_words = re.compile(r'\b(' + r'|'.join(stopw) + r')\b\s*')
-
 
 
 def sanitize_string(s):
@@ -159,9 +167,6 @@ words_count = {k: v for k, v in sorted(a.items(), key=lambda item: item[1], reve
 ```
 
 ```{python}
-import matplotlib.pyplot as plt
-from itertools import islice
-
 # Present the first 10 words
 idx = 10
 
@@ -173,6 +178,82 @@ ax.barh(list(best_words.keys())[::-1], list(best_words.values())[::-1],
         color=palette.cividis(idx) )
 ax.set_xlabel('Total')
 ax.set_title('Most present words in the text')
+
+plt.show()
+```
+
+```{python}
+# GRIDSEARCH - TIME ANALYSIS
+
+def compute_time(n_workers, n_partitions):
+    
+    cluster = LocalCluster(n_workers = n_workers)
+    
+    client = Client(cluster) 
+    
+    start = time.time() 
+        
+    PATH = os.path.join('data', 'papers_in_json', '*.json')
+
+    js = db.read_text(PATH).map(json.loads)
+    js = js.repartition(n_partitions)
+    
+    filename = glob.glob(PATH)[0]
+
+    with open(filename) as f:
+        data = json.loads(f.read())
+
+    string = ' '.join([a['text'] for a in data['body_text']]) 
+    
+    s = sanitize_string(string)
+    
+    js = js.map(joiner)
+    js = js.map(sanitize_string).map(count_words)
+    
+    reduction = js.fold(binop=merge_dictionaries, combine=merge_dictionaries)
+    
+    a = reduction.compute() #Fix error of plasmodium, should be 53 or 52
+
+    words_count = {k: v for k, v in sorted(a.items(), key=lambda item: item[1], reverse=True)}
+
+    end = time.time()
+    
+    client.close()
+    cluster.close() 
+    
+    computed_time = end - start
+    
+    return computed_time
+```
+
+```{python}
+workers = [1, 2, 3, 4]
+partitions = [1, 2, 5, 10, 25, 100, 500]
+
+times = []
+
+for w in workers:
+    for p in partitions:
+        t = compute_time(n_workers = w, n_partitions = p*w)
+        times.append(t)
+        print("Workers=", w, "Partitions=", p*w, "Time=", t,"s")
+```
+
+```{python}
+time_plot = np.array(times).reshape(len(workers), len(partitions))
+```
+
+```{python}
+df_times = pd.DataFrame(time_plot)
+
+plt.figure(figsize=(12,6))
+
+ax = sn.heatmap(df_times, annot=True, annot_kws={"size": 14},fmt=".3f",
+                xticklabels=partitions, yticklabels=[1,2,4],
+                cbar_kws={'label':'Computation time [s]'},cmap='cividis_r' )
+ax.invert_yaxis()
+ax.set_xlabel("Partitions per workers", fontsize=14, fontweight='bold')
+ax.set_ylabel("Worker", fontsize=14, fontweight='bold')
 
 plt.show()
 ```
@@ -254,6 +335,69 @@ plt.show()
 ```
 
 ```{python}
+# GRIDSEARCH - TIME ANALYSIS
+
+def compute_time_countries(n_workers, n_partitions):
+    
+    cluster = LocalCluster(n_workers = n_workers)
+    
+    client = Client(cluster) 
+    
+    start = time.time() 
+        
+    PATH = os.path.join('data', 'papers_in_json', '*.json')
+    js = db.read_text(PATH).map(json.loads)
+    js = js.repartition(n_partitions)
+    
+    authors = js.map(reformat).flatten().to_dataframe()
+    
+    countries = authors.groupby('country').author.count().compute() 
+    sorted_countries = countries.sort_values(ascending=False) # Sorting in descending order
+    
+    end = time.time()
+    
+    client.close()
+    cluster.close() 
+    
+    computed_time = end - start
+    
+    return computed_time
+```
+
+```{python}
+workers = [1, 2, 3, 4]
+partitions = [1, 2, 5, 10, 25, 100, 500]
+
+times_c = []
+
+for w in workers:
+    for p in partitions:
+        t = compute_time_countries(n_workers = w, n_partitions = p*w)
+        times_c.append(t)
+        print("Workers=", w, "Partitions=", p*w, "Time=", t,"s")
+```
+
+```{python}
+# times_c.append(18)
+time_plot_countries = np.array(times_c).reshape(len(workers), len(partitions))
+```
+
+```{python}
+df_times_c = pd.DataFrame(time_plot_countries)
+
+plt.figure(figsize=(12,6))
+
+ax = sn.heatmap(df_times_c, annot=True, annot_kws={"size": 14},fmt=".3f",
+                xticklabels=partitions, yticklabels=workers,
+                cbar_kws={'label':'Computation time [s]'},cmap='cividis_r' )
+ax.invert_yaxis()
+ax.set_ylabel("Workers", fontsize=14, fontweight='bold')
+ax.set_xlabel("Partitions per worker", fontsize=14, fontweight='bold')
+
+plt.show()
+```
+
+```{python}
 # Group by institution and then count. We select the author column aribitrarly, 
 #to have just a single-column serie
 
@@ -275,8 +419,71 @@ plt.show()
 ```
 
 ```{python}
+# GRIDSEARCH - TIME ANALYSIS
+
+def compute_time_uni(n_workers, n_partitions):
+    
+    cluster = LocalCluster(n_workers = n_workers)
+    
+    client = Client(cluster) 
+    
+    start = time.time() 
+        
+    PATH = os.path.join('data', 'papers_in_json', '*.json')
+    js = db.read_text(PATH).map(json.loads)
+    js = js.repartition(n_partitions)
+    
+    authors = js.map(reformat).flatten().to_dataframe()
+    
+    universities = authors.groupby('institution').author.count().compute()
+    sorted_uni = universities.sort_values(ascending=False) # Sorting in descending order
+
+    end = time.time()
+    
+    client.close()
+    cluster.close() 
+    
+    computed_time = end - start
+    
+    return computed_time
+```
+
+```{python}
+workers = [1, 2, 3, 4]
+partitions = [1, 2, 5, 10, 25, 100, 500]
+
+times_u = []
+
+for w in workers:
+    for p in partitions:
+        t = compute_time_uni(n_workers = w, n_partitions = p*w)
+        times_u.append(t)
+        print("Workers=", w, "Partitions=", p*w, "Time=", t,"s")
+```
+
+```{python}
+times_u.append(18)
+time_plot_uni = np.array(times_u).reshape(len(workers), len(partitions))
+```
+
+```{python}
+df_times_u = pd.DataFrame(time_plot_uni)
+
+plt.figure(figsize=(12,6))
+
+ax = sn.heatmap(df_times_u, annot=True, annot_kws={"size": 14},fmt=".3f",
+                xticklabels=partitions, yticklabels=workers,
+                cbar_kws={'label':'Computation time [s]'},cmap='cividis_r' )
+ax.invert_yaxis()
+ax.set_ylabel("Workers", fontsize=14, fontweight='bold')
+ax.set_xlabel("Partitions per worker", fontsize=14, fontweight='bold')
+
+plt.show()
+```
+
+```{python}
 #TO DO
-# Gridsearch per i primi due punti => + Plot # Bea
+# Gridsearch per i primi due punti => + Plot # DONE
 # Plot (parole più frequenti, countries and institutions with more papers) # DONE
 # Sistemare il grande numero di Missing, dovuto a diverse convenzioni # 
 # nested try except # DONE (Ancora un sacco di missing ma se i ricercatori son stupidi e 
@@ -298,8 +505,6 @@ Basically the pre-trained model is more or less a huge dictionary in the followi
 To load the model, follow the snippet of code which is slightly different from what you can find at this page: https://fasttext.cc/docs/en/english-vectors.html
 
 ```{python}
-import io
-
 def load_vectors(fname):
     fin = io.open(fname, ’r’, encoding=’utf-8’, newline=’\n’, errors=’ignore’)
     n, d = map(int, fin.readline().split())
