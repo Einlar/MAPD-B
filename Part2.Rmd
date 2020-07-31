@@ -5,7 +5,7 @@ jupyter:
       extension: .Rmd
       format_name: rmarkdown
       format_version: '1.2'
-      jupytext_version: 1.5.2
+      jupytext_version: 1.4.1
   kernelspec:
     display_name: Python 3
     language: python
@@ -15,9 +15,10 @@ jupyter:
 <h1><center>MAPD mod. B</center><a class="tocSkip"></h1>
 
 
-- Marco Ballarin
-- Francesco Manzali
-- Beatrice Segalini
+**Authors**
+- Marco Ballarin (1228022)
+- Francesco Manzali (1234428)
+- Beatrice Segalini (1234430)
 
 
 # Redundancy
@@ -40,12 +41,14 @@ import os
 import errno
 import requests
 
+#Create a folder "data" for the input file
 try:
     os.makedirs("data")
 except OSError as e:
     if e.errno != errno.EEXIST:
         raise
 
+#Download the input file and save it into the folder "data"
 url = 'http://apeters.web.cern.ch/apeters/pd2020/raid4.input'
 r = requests.get(url, allow_redirects=True)
 
@@ -102,7 +105,7 @@ for file in files:
 ## Stripe files parity
 The program is extended to compute also the **parity** of all bytes within one stripe file, which acts as a **checksum** for each stripe file. This adds a total of $4+1$ bytes to the total stripe files size. Since the row-wise parities (i.e. the contents of `raid4.4`) occupy an additional $\lceil$SIZE$/4\rceil$, where SIZE is the number of bytes in the original file, the theoretical overhead of the RAID-4 algorithm is:
 
-$$\mathrm{Overheaf} = \frac{\mathrm{SIZE}/4 + 5}{\mathrm{SIZE}} = \frac{1}{4} + \frac{5}{\mathrm{SIZE}} $$
+$$\mathrm{Overhead} = \frac{\mathrm{SIZE}/4 + 5}{\mathrm{SIZE}} = \frac{1}{4} + \frac{5}{\mathrm{SIZE}} $$
 
 Since usually $\mathrm{SIZE} \gg 5$, we expect an overhead of $25\%$.
 
@@ -147,7 +150,7 @@ $$p_i = \bigoplus_{j=0}^{N-1} a_i^{(j)}$$
 with $N=4$ in this case.
 So the $i$-th byte $f_i$ of the new stripe file would be computed as:
 
-$$ f_i = \bigoplus_{j=0}^{N-1} a_i^{(j)} \oplus p_i = \bigoplus_{j=0}^{N-1} a_i^{(j)} + \bigoplus_{j=0}^{N-1} a_i^{(j)} = 0 \>\>\> \forall i$$ 
+$$ f_i = \bigoplus_{j=0}^{N-1} a_i^{(j)} \oplus p_i = \bigoplus_{j=0}^{N-1} a_i^{(j)} \oplus \bigoplus_{j=0}^{N-1} a_i^{(j)} = 0 \>\>\> \forall i$$ 
 
 since always $a \oplus a = 0$.
 
@@ -208,7 +211,8 @@ $$a_i^{(4)} = a_i^{(0)} \oplus  a_i^{(1)} \oplus a_i^{(2)} \oplus a_i^{(3)} $$
 
 And so, since the XOR operation is both associative and commutative (and dropping the $i$ index for simplicity):
 
-$$(a^{(0)} \oplus  a^{(1)} \oplus a^{(2)} \oplus a^{(3)}) \oplus a^{(1)} \oplus a^{(2)} \oplus a^{(3)} = a^{(0)} \oplus (a^{(1)} \oplus a^{(1)}) \oplus (a^{(2)} \oplus a^{(2)}) \oplus (a^{(3)} \oplus a^{(3)}) = a^{(0)} \oplus 0 \oplus 0 \oplus 0 = a_0 $$
+$$(a^{(0)} \oplus  a^{(1)} \oplus a^{(2)} \oplus a^{(3)}) \oplus a^{(1)} \oplus a^{(2)} \oplus a^{(3)} =\\
+=a^{(0)} \oplus (a^{(1)} \oplus a^{(1)}) \oplus (a^{(2)} \oplus a^{(2)}) \oplus (a^{(3)} \oplus a^{(3)}) = a^{(0)} \oplus 0 \oplus 0 \oplus 0 = a^{(0)} $$
 which proves the formula for $a_i^{(0)}$.
 
 ```{python}
@@ -233,6 +237,9 @@ for file in files:
 #Since this cell does not raise any error, the reconstruction algorithm is proved to be effective.
 ```
 
+Storing the original filesize somewhere can be useful, since it allows to check if some bytes went missing in one of the files, which would lead to a *shift* error in computing the parities.
+
+
 # Cryptography
 
 
@@ -256,29 +263,33 @@ The encryption is symmetric by definition: in fact, the same key is used to encr
 **2.2** Write a small brute force program which tests keys from $0 \dots 255$ and use a dictionary approach to figure out the original message. What is the decryption algorithm/formula to be used?
 
 ```{python}
-import enchant
+import enchant #Used to check that the decrypted string contains english words
+
+# #!pip install pyenchant
 ```
 
 ```{python}
 message       = "K]amua!kv$huvt"
 
 nonce         = np.arange(0, len(message), dtype=int)
-ascii_message = np.array([ord(c) for c in message])
+ascii_message = np.array([ord(c) for c in message]) #Convert to ASCII
      
 print(message)
 print(ascii_message)
 ```
 
 ```{python}
+#Bruteforce
 for i in range(256):
+    decrypt = ascii_message - i - nonce #Decryption formula
     
-    decrypt = ascii_message - i - nonce
+    #Values that go under 0 are cycled back to 255
     decrypt[decrypt < 0] = decrypt[decrypt < 0] + 256
     
     print("Key value:", i, "=>", ''.join(map(chr,decrypt)))
 ```
 
-By manually looking at all the results, one obtain that the encrypted message is **Padova is cool** and that the secret key is $251$.
+By manually looking at all the results, one obtains that the encrypted message is **Padova is cool** and that the secret key is $251$.
 
 To authomatically detect the secret message, one could rely on the *dictionary approach*, as reported below:
 
@@ -292,16 +303,16 @@ for i in range(256):
     
     decr_mess = ''.join(map(chr,decrypt))
     
-    string_mess = decr_mess.split()
+    string_mess = decr_mess.split() #Split message in words
     mask = []
     
     for c in range(len(string_mess)):
-        try:
+        try: #Checks if string_mess[c] contains a english word
             mask.append(eng.check(string_mess[c]))
         except:
             continue
     
-    if True in mask :
+    if True in mask : #Print only keys that generate english words
         print("Key value:", i, "=>", decr_mess)
 ```
 
@@ -309,39 +320,41 @@ for i in range(256):
 
 
 In a cloud storage system we are mapping objects by name to locations using a hash table.
-Imagine we have a system with ten hard disks ($10$ locations). We enumerate the location of a file using an index of the hard disk $[0..9]$.
+Imagine we have a system with ten hard disks ($10$ locations). We enumerate the location of a file using an index of the hard disk $[0...9]$.
 
 Our hash algorithm for placement produces hashes, which are distributed uniform over the value space for a flat input key distribution.
 We want now to simulate the behaviour of our hash algorithm without the need to actually compute any hash value.
-Instead of using real filenames, which we would hash and map using a hash table to a location (as we did in the exercise), we are ‘computing’ a location for ‘any’ file by generating a random number for the location in the range $[0..9]$ to assign a file location. To place a file in the storage system we use this random location where the file will be stored and consumes space.
+Instead of using real filenames, which we would hash and map using a hash table to a location (as we did in the exercise), we are ‘computing’ a location for ‘any’ file by generating a random number for the location in the range $[0...9]$ to assign a file location. To place a file in the storage system we use this random location where the file will be stored and consumes space.
 
 
 ## Theoretical analysis
-We want to analyze the process of storing data in $N\in \mathbb{N}$ hard disks until one of them is full, i.e. contains $M\in \mathbb{N}$ data, choosing uniformly the disk where we store. We can store a quantity $h$ of data each time step, such that $q\cdot h=M$ with $q\in\mathbb{N}$. We can deal with this problem modeling it with a Markov Process. We will indicate our state as $\vec n=(n_1,\cdots, n_N)$ and with $\vec k = (0,\cdots,0,h,0,\cdots,0)$ the vector with $h$ in the $k$-th position and $0$ everywhere else.
+We want to analyze the process of storing data in $N\in \mathbb{N}$ hard disks until one of them is full, i.e. contains $M\in \mathbb{N}$ data, choosing uniformly the disk where we store. We can store a quantity $h$ of data at each time step, such that $q\cdot h=M$ with $q\in\mathbb{N}$. We can deal with this problem modeling it with a Markov Process. We will indicate our state as $\mathbf{n} =(n_1,\cdots, n_N)$ and with $\mathbf{k} = (0,\cdots,0,h,0,\cdots,0)$ the vector with $h$ in the $k$-th position and $0$ everywhere else.
 
 We can write the transition rates as:
 $$
-\cases{W(\vec n|\vec{n'})=\frac{1}{N}\prod_i(1-\delta_{n_i',M}) & if $\vec{n'}=\vec n-\vec k$\\
-W(\vec n|\vec{n'})=0 & if $\vec{n'}\neq\vec n-\vec k$
+\cases{W(\mathbf{n} |\mathbf{n'})=\frac{1}{N}\prod_i(1-\delta_{n_i',M}) & if $\mathbf{n'}=\mathbf{n}-\mathbf{k}$\\
+W(\mathbf{n}|\mathbf{n'})=0 & if $\mathbf{n'}\neq\mathbf{n}-\mathbf{k}$
 }
 $$
 
 We can so write the master equation associated to such a process:
 $$
-\frac{d}{dt}p(\vec n,t)=\frac{1}{N}\sum_k\prod_i\left[(1-\delta_{n_i-k,M})p(\vec n-\vec k, t)- (1-\delta_{n_i,M})p(\vec n, t) \right]
+\frac{\mathrm{d}}{\mathrm{dt}}p(\mathbf{n},t)=\frac{1}{N}\sum_{k=1}^N\prod_{i=1}^N\left[(1-\delta_{n_i-k,M})p(\mathbf{n}-\mathbf{k}, t)- (1-\delta_{n_i,M})p(\mathbf{n}, t) \right]
 $$
+with $k_j = h \delta_{jk}$.
+
 Starting from this point we can find interesting quantities, such as:
 \begin{align}
 <n_j>&\stackrel{n_j<M}{=}\frac{h}{N}t\\
-<|\vec n|^2>&\stackrel{n_j<M}{=}\frac{h^2}{6N}(N-12)t
+<|\mathbf{n}|^2>&\stackrel{n_j<M}{=}\frac{h^2}{6N}(N-12)t
 \end{align}
-From here we can see that, as long as $n_j\leq M$ $ \forall j$ both the quantity of data stored in a single disk and a measure of all the data stored in the system (the norm of the vector) scale linearly in time and both proportionally to the chunk size $h$.
+From here we can see that, as long as $n_j\leq M$ $ \forall j$, both the quantity of data stored in a single disk and a measure of all the data stored in the system (the norm of the vector) scale linearly in time and both proportionally to the chunk size $h$.
 
-But the really important result is obtaind by applying the Markov Inequality:
+But the really important result is obtained by applying the Markov Inequality:
 $$
 p(n_j\geq M) \leq \frac{E(n_j)}{M}=\frac{h}{NM}t
 $$
-From here we can see that if $h<<M$ than $p(n_j\geq M)$ is really small, and so also the probability of stopping our process due to the filling of a single disk. Eventually one disk will be filled due to the proportionality with $t$, but in a much longer time that let us fill more evenly the disks.
+From here we can see that if $h\ll M$, then $p(n_j\geq M)$ is really small, and so it is the probability of stopping our process due to the filling of a single disk. Eventually one disk will be filled due to the proportionality with $t$, but in a much longer time, allowing us to fill more evenly the disks.
 
 A theoretical evaluation of $p(n_i|n_j\geq M)$ is beyond the scope of this introduction, but we will analyze it with numerical methods.
 
@@ -365,8 +378,9 @@ class CloudStorage():
             M: int
                 Memory available for each disk in GB
         """
+        
         self.N = N
-        self.disks = np.zeros(N)
+        self.disks = np.zeros(N)  # Space occupied in every disk
         self.M = M
         self.OKtoGO = True        # Flag True if no disk is full
         self.files = 0            # Number of files in the storage
@@ -379,19 +393,21 @@ class CloudStorage():
         Params:
             h: float
                 Chunk size of the data to be stored in GB
-        Stores a file in the cloud storage if no one of the disk is full.
+        Stores a file in the cloud storage if no disk is full.
         """
-        if any(self.disks >= self.M):
+        
+        if any(self.disks >= self.M): #Check if a disk is full
             if warnings:
-                print('ERROR! One of the disk is full.' + 
+                print('ERROR! One of the disks is full.' + 
                       ' The storage process is no longer possible.')
             self.OKtoGO = False
         elif self.OKtoGO:
-            k = np.random.randint(0, self.N)
-            if self.disks[k]+h > self.M:
+            k = np.random.randint(0, self.N) #Choose randomly a disk to add data to
+            if self.disks[k]+h > self.M: #Check if there is sufficient space to add a block to a disk
                 print('ERROR! Tried to store chunk size of '+ str(h) + ' GB in disk with only '
                       + str(self.M-self.disks[k]) + ' GB of space left.')
-            else:
+                self.OKtoGO = False
+            else: #Add data
                 self.disks[k] += h
                 self.files += 1
                 
@@ -399,6 +415,7 @@ class CloudStorage():
         """
         Plots the distribution of the full space of the disks as barplot
         """
+        
         fig, ax = plt.subplots( figsize=(12,6))
         ax.hlines(y=1, xmin=-1, xmax=10, linestyle='dashed', color='red')
         ax.bar(np.arange(self.N), self.disks/self.M)
@@ -409,9 +426,10 @@ class CloudStorage():
         
     def result(self, prints=False):
         """
-        Gives as an output the number of files stored and the average size of the empty
-        space for each disk (excluded the full one).
+        Gives as an output the number of files stored and the average allocation in the
+        non-full disks.
         """
+        
         perc = self.disks[self.disks != self.M]/self.M
         mean_perc = perc.mean()
         if prints:
@@ -503,7 +521,7 @@ U_S = np.array(U_S)
 fig, ax = plt.subplots(figsize=(12,6))
 ax.plot(block_sizes/1e3, U_S, 'ro--', label='Data')
 ax.fill_between(block_sizes/1e3, U_S+U_S_std, U_S-U_S_std, color='green', alpha=0.5,
-                label='Standard devation')
+                label='Standard deviation')
 ax.legend()
 ax.set_xlabel('Relative block size')
 ax.set_ylabel('Relative used space')
@@ -511,7 +529,7 @@ ax.set_title('Analysis of the average used space per disk wrt the block size')
 plt.show()
 ```
 
-We can see that when the block size is really small with respect to the capacity of a disk the used space is really high and it decreases as we increase the blocksize. Indeed we can also see that the standard deviation increases with the block size, meaning that we cannot even have a solid prediction of the used space.
+We can see that when the block size is really small with respect to the capacity of a disk, the used space is really high and it decreases as we increase the blocksize. Indeed we can also see that the standard deviation increases with the block size, meaning that we cannot even have a solid prediction of the used space.
 
 
 ### Number of files stored vs block size
@@ -549,7 +567,7 @@ ax.hist(distr1GB/10, alpha=0.8, color='green', density=True, bins=20, label='h=1
 ax.set_xlabel('Number of files stored')
 ax.set_ylabel('Density')
 ax.set_title('Distribution of the number of files stored before '+
-             'the end of the process with h=10GB')
+             'the end of the process')
 ax.legend()
 plt.show()
 ```
@@ -558,7 +576,3 @@ We report here the distribution of the number of files stored by running the exp
 
 
 We can so finally state that the *block storage approach*, i.e. storing files with blocksizes of $4$ M, is to be preferred since in this way we can store more files and have a negligible empty space on the disks.
-
-```{python}
-
-```
