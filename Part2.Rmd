@@ -5,7 +5,7 @@ jupyter:
       extension: .Rmd
       format_name: rmarkdown
       format_version: '1.2'
-      jupytext_version: 1.3.2
+      jupytext_version: 1.5.2
   kernelspec:
     display_name: Python 3
     language: python
@@ -14,28 +14,550 @@ jupyter:
 
 <h1><center>MAPD mod. B</center><a class="tocSkip"></h1>
 
-<!-- #region toc=true -->
-<h1>Table of Contents<span class="tocSkip"></span></h1>
-<div class="toc"><ul class="toc-item"><li><span><a href="#Redundancy" data-toc-modified-id="Redundancy-1"><span class="toc-item-num">1&nbsp;&nbsp;</span>Redundancy</a></span></li><li><span><a href="#Cryptography" data-toc-modified-id="Cryptography-2"><span class="toc-item-num">2&nbsp;&nbsp;</span>Cryptography</a></span></li><li><span><a href="#Cloud-Storage-Technology" data-toc-modified-id="Cloud-Storage-Technology-3"><span class="toc-item-num">3&nbsp;&nbsp;</span>Cloud Storage Technology</a></span></li></ul></div>
-<!-- #endregion -->
+
+- Marco Ballarin
+- Francesco Manzali
+- Beatrice Segalini
+
 
 # Redundancy
 
-```{python}
 
+We are programming a file based **RAID-4** software algorithm. For this purpose we are converting a single input file (`raid4.input`) into four *data* files:
+- `raid4.0`
+- `raid4.1`
+- `raid4.2`
+- `raid4.3`
+
+and one *parity* file:
+- `raid4.4`
+The four data and one parity files are called *stripe files*.
+
+The input file can be downloaded from: [http://apeters.web.cern.ch/apeters/pd2020/raid4.input](http://apeters.web.cern.ch/apeters/pd2020/raid4.input)
+
+```{python}
+import os
+import errno
+import requests
+
+try:
+    os.makedirs("data")
+except OSError as e:
+    if e.errno != errno.EEXIST:
+        raise
+
+url = 'http://apeters.web.cern.ch/apeters/pd2020/raid4.input'
+r = requests.get(url, allow_redirects=True)
+
+file_size = open("data/raid4.input", "wb").write(r.content)
+print("Downloaded {} bytes".format(file_size))
+```
+
+## Compute the stripe files
+The procedure is as follows:
+- Read 4 bytes from `raid4.input`, and sequentially write each one of them into one of the four files `raid4.0`, `raid4.1`, `raid4.2` and `raid4.3`. The parity of the four bytes is then computed and written in the fifth file (`raid4.4`)
+- The previous operation is repeated until the file ends, eventually adding some 0 padding to the tail of `raid4.input` if it does not contain a number of bytes divisible by $4$.
+
+```{python}
+import numpy as np
+import operator
+from functools import reduce
+
+#Create output folder
+try:
+    os.makedirs("output")
+except OSError as e:
+    if e.errno != errno.EEXIST:
+        raise
+
+#Create output files
+N = 4 #RAID-4
+file_names = ["output/raid{:1d}.{:d}".format(N, a) for a in range(N+1)]
+files = [open(filename, "wb") for filename in file_names]
+
+#Write data
+with open("data/raid4.input", "rb") as f:
+    block = f.read(N)
+    
+    while block:
+        block += b'\0' * (N - len(block)) #Pad if necessary
+
+        parity = reduce(operator.xor, block, 0)
+        
+        #by default, elements of a bytes object are integers in [0,255]
+        #(See https://docs.python.org/3.1/library/stdtypes.html#sequence-types-str-bytes-bytearray-list-tuple-range)
+        #So a casting to byte is needed when writing
+        for i in range(N):
+            files[i].write(block[i].to_bytes(1, byteorder='big'))
+
+        files[-1].write(parity.to_bytes(1, byteorder='big'))
+        
+        block = f.read(N) #Read the next block
+
+#Close files
+for file in files:
+    file.close()
+```
+
+## Stripe files parity
+The program is extended to compute also the **parity** of all bytes within one stripe file, which acts as a **checksum** for each stripe file. This adds a total of $4+1$ bytes to the total stripe files size. Since the row-wise parities (i.e. the contents of `raid4.4`) occupy an additional $\lceil$SIZE$/4\rceil$, where SIZE is the number of bytes in the original file, the theoretical overhead of the RAID-4 algorithm is:
+
+$$\mathrm{Overheaf} = \frac{\mathrm{SIZE}/4 + 5}{\mathrm{SIZE}} = \frac{1}{4} + \frac{5}{\mathrm{SIZE}} $$
+
+Since usually $\mathrm{SIZE} \gg 5$, we expect an overhead of $25\%$.
+
+```{python}
+files = [open(filename, "rb") for filename in file_names]
+sizes = [os.path.getsize(filename) for filename in file_names]
+
+parity_values = []
+
+for file in files:
+    parity = 0
+    byte = file.read(1)
+    
+    while byte:
+        parity ^= byte[0]
+        byte = file.read(1)
+    
+    file.close()
+    
+    parity_values.append('{:02x}'.format(parity))
+    
+    print("Parity of {} is 0x{:02x}".format(file.name, parity))
+    
+overhead = (sum(sizes) / file_size - 1) * 100
+print("Overhead: {:.2f}%".format(overhead))
+```
+
+## 5-byte parity value
+The $5$-byte parity value $P^5 = $0x[q0][q1][q2][q3][q4], where [qx] are the hexadecimal parity bytes computed by *xor-ing* all bytes in each stripe file is given by:
+
+```{python}
+print("5-byte parity values is: 0x" + ''.join(parity_values))
+```
+
+## Row-wise parities
+If you create a sixth stripe file, which contains the row-wise parities of the five stripe files, what would be the contents of this file?
+
+Since the last stripe file (`raid4.4` in this case) contains the row-wise parities of the other stripe files, the new file would only contain zeros. In fact, let $a_i^{(j)}$ be the $i$-th byte of `raid4.j`, and $p_i$ the $i$-th byte of `raid4.4`. By construction, we have:
+
+$$p_i = \bigoplus_{j=0}^{N-1} a_i^{(j)}$$
+
+with $N=4$ in this case.
+So the $i$-th byte $f_i$ of the new stripe file would be computed as:
+
+$$ f_i = \bigoplus_{j=0}^{N-1} a_i^{(j)} \oplus p_i = \bigoplus_{j=0}^{N-1} a_i^{(j)} + \bigoplus_{j=0}^{N-1} a_i^{(j)} = 0 \>\>\> \forall i$$ 
+
+since always $a \oplus a = 0$.
+
+```{python}
+#Let's validate this result
+files = [open(filename, "rb") for filename in file_names]
+
+assert len(set(sizes)) == 1 #All files should be of same size
+
+stripe_size = sizes[0]
+
+with open("output/additional_stripe", "wb") as out:
+    for i in range(stripe_size):
+        a = 0
+        for file in files:
+            a ^= file.read(1)[0]
+        
+        out.write(a.to_bytes(1, byteorder="big"))
+
+for file in files:
+    file.close()  
+```
+
+```{python}
+#As expected, all bytes are zero:
+
+with open("output/additional_stripe", "rb") as out:
+    print("First 10 bytes: ", out.read(10))
+    
+    out.seek(stripe_size - 10)
+    print("Last 10 bytes: ", out.read(10))
+```
+
+## Data reconstruction
+After some time you recompute the $5$-byte parity value as in 1.3. Now the result is $P^5 = $ 0xff 0x07 0xa0 0x9b 0x99.
+Something has been corrupted. You want to reconstruct the original file `raid4.input` using the $5$ stripe files. Describe how you can recreate the original data file. Which stripe files do you use and how do you recreate the original data file?
+Why could it be useful to store also the file size somewhere?
+
+
+
+
+We start by comparing the new parity to the previous one:
+
+|          | 0  | 1  | 2  | 3  | 4  |
+|----------|----|----|----|----|----|
+| Previous | **a5** | 07 | a0 | 9b | 99 |
+|  Current | **ff** | 07 | a0 | 9b | 99 |
+
+The only difference lies in the parity of `raid4.0`. This means that a corruption has happened in the first stripe file, while it is unlikely that anything has changed in the other files (since that would require all *random* errors to "perfectly cancel out" in the parities). So we can use `raid4.1`, `raid4.2`, `raid4.3` and `raid4.4` to reconstruct `raid4.0`. Let $a_i^{(j)}$ be the $i$-th byte of `raid4.j`. 
+
+We can compute $a_i^{(0)}$ as follows:
+
+$$a_i^{(0)} =  a_i^{(4)} \oplus a_i^{(1)} \oplus a_i^{(2)} \oplus a_i^{(3)}$$
+
+In fact, we know that, by construction:
+
+$$a_i^{(4)} = a_i^{(0)} \oplus  a_i^{(1)} \oplus a_i^{(2)} \oplus a_i^{(3)} $$
+
+And so, since the XOR operation is both associative and commutative (and dropping the $i$ index for simplicity):
+
+$$(a^{(0)} \oplus  a^{(1)} \oplus a^{(2)} \oplus a^{(3)}) \oplus a^{(1)} \oplus a^{(2)} \oplus a^{(3)} = a^{(0)} \oplus (a^{(1)} \oplus a^{(1)}) \oplus (a^{(2)} \oplus a^{(2)}) \oplus (a^{(3)} \oplus a^{(3)}) = a^{(0)} \oplus 0 \oplus 0 \oplus 0 = a_0 $$
+which proves the formula for $a_i^{(0)}$.
+
+```{python}
+#Let's again validate this result in practice
+files = [open(filename, "rb") for filename in file_names]
+
+for i in range(stripe_size):
+    parity = 0
+    
+    for file in files[1:]: #Exclude the first stripe file
+        parity ^= file.read(1)[0]
+        
+    #Compare with the first file "true" value
+    byte = files[0].read(1)[0]
+    if parity != byte:
+        print("Error in reconstruction!")
+        break
+        
+for file in files:
+    file.close()  
+
+#Since this cell does not raise any error, the reconstruction algorithm is proved to be effective.
 ```
 
 # Cryptography
 
-```{python}
 
+A friend has emailed you the following text: **K]amua!kv$huvt**
+
+She told you that her encryption algorithm works like this:
+
+- to each ASCI value of each letter I add a *secret key* value. (note that ASCII values range from 0 to 255)
+- additionally to make it more secure I add a variable (so called) _nonce_ value to each ASCII number.
+
+The nonce start value is 0 for the first character of the message. For each following character I increase the nonce by 1, e.g. for the second letter the nonce added is 1, for the third letter it is 2 and so on.
+
+`` encoded_character[i] = character[i] + key + nonce(i)``
+
+## Assignment 2
+
+**2.1** Is this symmetric or asymmetric encryption and explain why?
+
+The encryption is symmetric by definition: in fact, the same key is used to encrypt and decrypt the message.
+
+**2.2** Write a small brute force program which tests keys from $0 \dots 255$ and use a dictionary approach to figure out the original message. What is the decryption algorithm/formula to be used?
+
+```{python}
+import enchant
+```
+
+```{python}
+message       = "K]amua!kv$huvt"
+
+nonce         = np.arange(0, len(message), dtype=int)
+ascii_message = np.array([ord(c) for c in message])
+     
+print(message)
+print(ascii_message)
+```
+
+```{python}
+for i in range(256):
+    
+    decrypt = ascii_message - i - nonce
+    decrypt[decrypt < 0] = decrypt[decrypt < 0] + 256
+    
+    print("Key value:", i, "=>", ''.join(map(chr,decrypt)))
+```
+
+By manually looking at all the results, one obtain that the encrypted message is **Padova is cool** and that the secret key is $251$.
+
+To authomatically detect the secret message, one could rely on the *dictionary approach*, as reported below:
+
+```{python}
+eng = enchant.Dict("en_US")
+
+for i in range(256):
+    
+    decrypt = ascii_message - i - nonce
+    decrypt[decrypt < 0] = decrypt[decrypt < 0] + 256
+    
+    decr_mess = ''.join(map(chr,decrypt))
+    
+    string_mess = decr_mess.split()
+    mask = []
+    
+    for c in range(len(string_mess)):
+        try:
+            mask.append(eng.check(string_mess[c]))
+        except:
+            continue
+    
+    if True in mask :
+        print("Key value:", i, "=>", decr_mess)
 ```
 
 # Cloud Storage Technology
 
+
+In a cloud storage system we are mapping objects by name to locations using a hash table.
+Imagine we have a system with ten hard disks ($10$ locations). We enumerate the location of a file using an index of the hard disk $[0..9]$.
+
+Our hash algorithm for placement produces hashes, which are distributed uniform over the value space for a flat input key distribution.
+We want now to simulate the behaviour of our hash algorithm without the need to actually compute any hash value.
+Instead of using real filenames, which we would hash and map using a hash table to a location (as we did in the exercise), we are ‘computing’ a location for ‘any’ file by generating a random number for the location in the range $[0..9]$ to assign a file location. To place a file in the storage system we use this random location where the file will be stored and consumes space.
+
+
+## Theoretical analysis
+We want to analyze the process of storing data in $N\in \mathbb{N}$ hard disks until one of them is full, i.e. contains $M\in \mathbb{N}$ data, choosing uniformly the disk where we store. We can store a quantity $h$ of data each time step, such that $q\cdot h=M$ with $q\in\mathbb{N}$. We can deal with this problem modeling it with a Markov Process. We will indicate our state as $\vec n=(n_1,\cdots, n_N)$ and with $\vec k = (0,\cdots,0,h,0,\cdots,0)$ the vector with $h$ in the $k$-th position and $0$ everywhere else.
+
+We can write the transition rates as:
+$$
+\cases{W(\vec n|\vec{n'})=\frac{1}{N}\prod_i(1-\delta_{n_i',M}) & if $\vec{n'}=\vec n-\vec k$\\
+W(\vec n|\vec{n'})=0 & if $\vec{n'}\neq\vec n-\vec k$
+}
+$$
+
+We can so write the master equation associated to such a process:
+$$
+\frac{d}{dt}p(\vec n,t)=\frac{1}{N}\sum_k\prod_i\left[(1-\delta_{n_i-k,M})p(\vec n-\vec k, t)- (1-\delta_{n_i,M})p(\vec n, t) \right]
+$$
+Starting from this point we can find interesting quantities, such as:
+\begin{align}
+<n_j>&\stackrel{n_j<M}{=}\frac{h}{N}t\\
+<|\vec n|^2>&\stackrel{n_j<M}{=}\frac{h^2}{6N}(N-12)t
+\end{align}
+From here we can see that, as long as $n_j\leq M$ $ \forall j$ both the quantity of data stored in a single disk and a measure of all the data stored in the system (the norm of the vector) scale linearly in time and both proportionally to the chunk size $h$.
+
+But the really important result is obtaind by applying the Markov Inequality:
+$$
+p(n_j\geq M) \leq \frac{E(n_j)}{M}=\frac{h}{NM}t
+$$
+From here we can see that if $h<<M$ than $p(n_j\geq M)$ is really small, and so also the probability of stopping our process due to the filling of a single disk. Eventually one disk will be filled due to the proportionality with $t$, but in a much longer time that let us fill more evenly the disks.
+
+A theoretical evaluation of $p(n_i|n_j\geq M)$ is beyond the scope of this introduction, but we will analyze it with numerical methods.
+
+
+
+## The program
+
+To better use the capabilities of python we create a class, `CloudStorage`, with which we will interact all the time. 
+
 ```{python}
+import matplotlib.pyplot as plt
+```
+
+```{python}
+class CloudStorage():
+    def __init__(self, N, M):
+        """
+        Params:
+            N: int
+                Number of disks available for the cloud storage
+            M: int
+                Memory available for each disk in GB
+        """
+        self.N = N
+        self.disks = np.zeros(N)
+        self.M = M
+        self.OKtoGO = True        # Flag True if no disk is full
+        self.files = 0            # Number of files in the storage
+        
+    def reset(self):
+        self.__init__(self.N, self.M)
+        
+    def storage(self, h, warnings=False):
+        """
+        Params:
+            h: float
+                Chunk size of the data to be stored in GB
+        Stores a file in the cloud storage if no one of the disk is full.
+        """
+        if any(self.disks >= self.M):
+            if warnings:
+                print('ERROR! One of the disk is full.' + 
+                      ' The storage process is no longer possible.')
+            self.OKtoGO = False
+        elif self.OKtoGO:
+            k = np.random.randint(0, self.N)
+            if self.disks[k]+h > self.M:
+                print('ERROR! Tried to store chunk size of '+ str(h) + ' GB in disk with only '
+                      + str(self.M-self.disks[k]) + ' GB of space left.')
+            else:
+                self.disks[k] += h
+                self.files += 1
+                
+    def plot(self):
+        """
+        Plots the distribution of the full space of the disks as barplot
+        """
+        fig, ax = plt.subplots( figsize=(12,6))
+        ax.hlines(y=1, xmin=-1, xmax=10, linestyle='dashed', color='red')
+        ax.bar(np.arange(self.N), self.disks/self.M)
+        ax.set_ylabel('Relative space occupied')
+        ax.set_xticks(np.arange(self.N))
+        ax.set_xlabel('Disk number')
+        plt.show()
+        
+    def result(self, prints=False):
+        """
+        Gives as an output the number of files stored and the average size of the empty
+        space for each disk (excluded the full one).
+        """
+        perc = self.disks[self.disks != self.M]/self.M
+        mean_perc = perc.mean()
+        if prints:
+            print('There are ' + str(self.files) + ' files allocated')
+            print('The average allocation in the non-full disk is: '+ str(mean_perc*100) +
+             ' %')
+        return(self.files, mean_perc)
+        
+        
+```
+
+```{python}
+# Visualization of the occupied spaces with blocksizes of 10 GB
+GB10 = CloudStorage(10, 1e3)
+
+while(GB10.OKtoGO):
+    GB10.storage(10)
+    
+GB10.plot()
+res = GB10.result(prints=True)
+```
+
+We now look at the average value of the number of files that can be stored in the disks and the average used space per disk (not taking into account the full one).
+
+```{python}
+def experiment(N, M, h, T):
+    N_files = []
+    Used_space = []
+    CS = CloudStorage(N, M)
+    
+    for i in range(T):
+        while(CS.OKtoGO):
+            CS.storage(h)
+        nf, us = CS.result()
+        N_files.append( nf)
+        Used_space.append( us)
+        CS.reset()
+    
+    N_files = np.array(N_files)
+    Used_space = np.array(Used_space)
+    
+    return(N_files.mean(), N_files.std(), Used_space.mean(), Used_space.std() )
 
 ```
+
+```{python}
+N_f_avg, N_f_std, U_s_avg, U_s_std = experiment(10, 1e3, 10, 100)
+```
+
+```{python}
+print('The average number of files is: %i +- %i' %(N_f_avg, N_f_std))
+print('The average relative used space is: %.2f +- %.2f'  %(U_s_avg, U_s_std))
+```
+
+## Analysis with chunck size of 1 GB
+We can now analyze the case with $1$ GB of file chunk
+
+```{python}
+N_f_avg, N_f_std, U_s_avg, U_s_std = experiment(10, 1e3, 1, 100)
+print('The average number of files is: %i +- %i' %(N_f_avg, N_f_std))
+print('The average relative used space is: %.2f +- %.2f'  %(U_s_avg, U_s_std))
+```
+
+## Evolution with the block size
+
+
+### Space used vs block size
+
+
+We can now look at how the average used space evolves with the block size
+
+```{python}
+block_sizes = np.array([1, 2, 4, 5, 10, 20, 40, 100, 200, 500])
+```
+
+```{python}
+U_S = []
+U_S_std = []
+for b in block_sizes:
+    N_f_avg, N_f_std, U_s_avg, U_s_std = experiment(10, 1e3, b, 20)
+    U_S.append(U_s_avg)
+    U_S_std.append(U_s_std)
+    
+U_S_std = np.array(U_S_std)
+U_S = np.array(U_S)
+```
+
+```{python}
+fig, ax = plt.subplots(figsize=(12,6))
+ax.plot(block_sizes/1e3, U_S, 'ro--', label='Data')
+ax.fill_between(block_sizes/1e3, U_S+U_S_std, U_S-U_S_std, color='green', alpha=0.5,
+                label='Standard devation')
+ax.legend()
+ax.set_xlabel('Relative block size')
+ax.set_ylabel('Relative used space')
+ax.set_title('Analysis of the average used space per disk wrt the block size')
+plt.show()
+```
+
+We can see that when the block size is really small with respect to the capacity of a disk the used space is really high and it decreases as we increase the blocksize. Indeed we can also see that the standard deviation increases with the block size, meaning that we cannot even have a solid prediction of the used space.
+
+
+### Number of files stored vs block size
+
+
+Lastly we can analyze the distribution of the number of files accepted before filling a disk, and thus understand the time distribution of the filling.
+
+```{python}
+def time_distr(N, M, h, T):
+    N_files = []
+    CS = CloudStorage(N, M)
+    
+    for i in range(T):
+        while(CS.OKtoGO):
+            CS.storage(h)
+        nf, us = CS.result()
+        N_files.append( nf)
+        CS.reset()
+    
+    N_files = np.array(N_files)
+    
+    return(N_files )
+
+```
+
+```{python}
+distr10GB = time_distr(10, 1e3, 10, 1000)
+distr1GB = time_distr(10, 1e3, 1, 1000)
+```
+
+```{python}
+fig, ax = plt.subplots(figsize=(12,6))
+ax.hist(distr10GB, alpha=0.8, color='blue', density=True, bins=20, label='h=10 GB')
+ax.hist(distr1GB/10, alpha=0.8, color='green', density=True, bins=20, label='h=1 GB')
+ax.set_xlabel('Number of files stored')
+ax.set_ylabel('Density')
+ax.set_title('Distribution of the number of files stored before '+
+             'the end of the process with h=10GB')
+ax.legend()
+plt.show()
+```
+
+We report here the distribution of the number of files stored by running the experiment $1000$ times for both the blocksizes of $10$ and $1$ GB, with the hypothesis that each file weights $10$ GB. We can see that we manage to store more files with the smaller block size, and that also the distribution is more peaked.
+
+
+We can so finally state that the *block storage approach*, i.e. storing files with blocksizes of $4$ M, is to be preferred since in this way we can store more files and have a negligible empty space on the disks.
 
 ```{python}
 
