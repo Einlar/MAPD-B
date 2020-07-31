@@ -13,6 +13,15 @@ jupyter:
     name: python3
 ---
 
+<h1><center>MAPD mod. B</center><a class="tocSkip"></h1>
+
+
+**Authors**
+- Marco Ballarin (1228022)
+- Francesco Manzali (1234428)
+- Beatrice Segalini (1234430)
+
+
 ## Word Counter
 
 <!-- #region -->
@@ -74,67 +83,63 @@ js = db.read_text(PATH).map(json.loads)
 ```
 
 ```{python}
-js = js.repartition(100)
-```
-
-```{python}
-#string = ''.join([a['text'] for a in data['body_text']])
-
 def joiner(paper):
+    """
+    Joins the paragraphs inside the "body_text" forming a unique string.
+    """
+    
     return ''.join([paragraph['text'] for paragraph in paper['body_text']])
-```
 
-```{python}
-# Unire text in body-text
-# Rimuovere punteggiatura etc.
-# Contare parole (parola, conto)
-
-filename = glob.glob(PATH)[0]
-
-with open(filename) as f:
-    data = json.loads(f.read())
-
-string = ' '.join([a['text'] for a in data['body_text']]) 
-```
-
-```{python}
-rm_word = ['also', 'may', 'et' , 'using', 'used', 'al', 'two', 'one', 'e', 'could', 'use']
-stopw = stopwords.words('english') + rm_word
-
-citations = re.compile('\[[\d]+\]')
-numbers = re.compile('((^|\s)[\d]+)')
-fixpoints = re.compile('([\.,:?;!](?=\w))')
-urls = re.compile('(http(s)?:\/\/.)?(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#?&//=]*)')
-pattern = re.compile('[^a-zA-Z\d\s]')
-spaces = re.compile('\s([\s]+)')
+#Regex for "filtering" a string
+rm_word    = ['also', 'may', 'et' , 'using', 'used', 'al', 'two', 'one', 'e', 'could', 'use']
+stopw      = stopwords.words('english') + rm_word
+citations  = re.compile('\[[\d]+\]')
+numbers    = re.compile('((^|\s)[\d]+)')
+fixpoints  = re.compile('([\.,:?;!](?=\w))')
+urls       = re.compile('(http(s)?:\/\/.)?(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#?&//=]*)')
+pattern    = re.compile('[^a-zA-Z\d\s]')
+spaces     = re.compile('\s([\s]+)')
 stop_words = re.compile(r'\b(' + r'|'.join(stopw) + r')\b\s*')
 
 
 def sanitize_string(s):
+    """
+    Remove all non-necessary characters/words from a string @s.
+    """
+    
     # Transform all capital letters in lower letters
     sanitized_string = s.lower()
+    
     # Remove urls
     sanitized_string = urls.sub('', sanitized_string)
+    
     # Remove citations of the type [x] where x is a number
     sanitized_string = citations.sub('', sanitized_string)
+    
     # Insert spacing after puntuations 
     sanitized_string = fixpoints.sub(' ', sanitized_string)
+    
     # Remove puntuation
     sanitized_string = pattern.sub('', sanitized_string)
+    
     # Remove single numbers
     sanitized_string = numbers.sub('', sanitized_string)
+    
     # Remove multiple spacing
     sanitized_string = spaces.sub('', sanitized_string)
+    
     # Removing stopwords or words that aren't interesting to the analysis
     sanitized_string = stop_words.sub('', sanitized_string)
     
     return sanitized_string
-
-s = sanitize_string(string)
 ```
 
 ```{python}
 def count_words(s):
+    """
+    Given a string @s, return a dictionary of { word : number_of_occurrences }
+    """
+    
     wordlist = {}
     
     for word in s.split():
@@ -147,27 +152,36 @@ def count_words(s):
 ```
 
 ```{python}
-js = js.map(joiner)
-js = js.map(sanitize_string).map(count_words)
+#Applies the above functions to the dataset (Map step)
+js = js.map(joiner).map(sanitize_string).map(count_words)
 ```
 
 ```{python}
 def merge_dictionaries(x, y):
-    return {k: x.get(k, 0) + y.get(k, 0) for k in set(x) | set(y)}
+    """
+    Given two dictionaries @x, @y, return their sum "x + y", i.e. a dictionary such that:
+    - each key of "x + y" is present in x or y (or both)
+    - the value of each key in "x + y" is the sum of the values the same key had in x and y.
+      (using 0 if it was not present in one of them)
+    """
     
+    return {k: x.get(k, 0) + y.get(k, 0) for k in set(x) | set(y)}
+
+#Reduce step
 reduction = js.fold(binop=merge_dictionaries, combine=merge_dictionaries)
 ```
 
 ```{python}
-a = reduction.compute() #Fix error of plasmodium, should be 53 or 52
+words_dictionary = reduction.compute() 
 ```
 
 ```{python}
-words_count = {k: v for k, v in sorted(a.items(), key=lambda item: item[1], reverse=True)}
+#Sort the words by number of occurrences (decreasing)
+words_count = {k: v for k, v in sorted(words_dictionary.items(), key=lambda item: item[1], reverse=True)}
 ```
 
 ```{python}
-# Present the first 10 words
+# Show the 10 most frequent words
 idx = 10
 
 best_words = dict( islice(words_count.items(), idx))
@@ -183,12 +197,20 @@ plt.show()
 ```
 
 ```{python}
+client.close()
+```
+
+```{python}
 # GRIDSEARCH - TIME ANALYSIS
 
 def compute_time(n_workers, n_partitions):
+    """
+    Executes all the previous steps for a given choice of @n_workers and @n_partitions
+    
+    Return: computed time
+    """
     
     cluster = LocalCluster(n_workers = n_workers)
-    
     client = Client(cluster) 
     
     start = time.time() 
@@ -198,22 +220,11 @@ def compute_time(n_workers, n_partitions):
     js = db.read_text(PATH).map(json.loads)
     js = js.repartition(n_partitions)
     
-    filename = glob.glob(PATH)[0]
-
-    with open(filename) as f:
-        data = json.loads(f.read())
-
-    string = ' '.join([a['text'] for a in data['body_text']]) 
-    
-    s = sanitize_string(string)
-    
-    js = js.map(joiner)
-    js = js.map(sanitize_string).map(count_words)
+    js = js.map(joiner).map(sanitize_string).map(count_words)
     
     reduction = js.fold(binop=merge_dictionaries, combine=merge_dictionaries)
     
-    a = reduction.compute() #Fix error of plasmodium, should be 53 or 52
-
+    a = reduction.compute()
     words_count = {k: v for k, v in sorted(a.items(), key=lambda item: item[1], reverse=True)}
 
     end = time.time()
@@ -227,36 +238,40 @@ def compute_time(n_workers, n_partitions):
 ```
 
 ```{python}
-workers = [1, 2, 3, 4]
-partitions = [1, 2, 5, 10, 25, 100, 500]
+from tqdm.notebook import tqdm
+
+workers = [1, 2, 4, 8]
+partitions = [1, 5, 25, 50, 75, 100]
 
 times = []
 
-for w in workers:
-    for p in partitions:
+for w in tqdm(workers):
+    for p in tqdm(partitions):
         t = compute_time(n_workers = w, n_partitions = p*w)
         times.append(t)
         print("Workers=", w, "Partitions=", p*w, "Time=", t,"s")
 ```
 
 ```{python}
+#Plot the grid search results
 time_plot = np.array(times).reshape(len(workers), len(partitions))
-```
 
-```{python}
 df_times = pd.DataFrame(time_plot)
 
 plt.figure(figsize=(12,6))
 
 ax = sn.heatmap(df_times, annot=True, annot_kws={"size": 14},fmt=".3f",
-                xticklabels=partitions, yticklabels=[1,2,4],
+                xticklabels=partitions, yticklabels=workers,
                 cbar_kws={'label':'Computation time [s]'},cmap='cividis_r' )
 ax.invert_yaxis()
-ax.set_xlabel("Partitions per workers", fontsize=14, fontweight='bold')
+ax.set_xlabel("Partitions per worker", fontsize=14, fontweight='bold')
 ax.set_ylabel("Worker", fontsize=14, fontweight='bold')
 
 plt.show()
 ```
+
+We see that increasing the number of workers leads to a better performance. The optimal number of partitions is found to be around $25$.
+
 
 ## Worst and Best represented Countries
 1. In this part you have to take the documents and convert them in a usable *DataFrame* data structure in order to figure out the countries that are most and less active in the research. To do this you can use the country of the authors. Do the same for the universities (affiliations).
@@ -268,9 +283,13 @@ PATH = os.path.join('data', 'papers_in_json', '*.json')
 
 js = db.read_text(PATH).map(json.loads)
 
-#metadata => authors => affiliation => location => country
 
 def reformat(paper):
+    """
+    Extract from data the following fields: "paper_id", "author" (first + last name), 
+    "institution" and "country".
+    """
+    
     metadata = paper['metadata'] #dictionary
     
     dataframe = []
@@ -318,18 +337,37 @@ authors = js.map(reformat).flatten().to_dataframe()
 ```{python}
 # Group by country and then count. We select the author column aribitrarly, to have just
 # a single-column serie
+
 countries = authors.groupby('country').author.count().compute() 
+```
+
+```{python}
 sorted_countries = countries.sort_values(ascending=False) # Sorting in descending order
+sorted_countries = sorted_countries.drop("Missing")
+```
+
+```{python}
+f, ax = plt.subplots(figsize=(12, 6))
+idx = 9
+
+ax.barh(sorted_countries.index[idx::-1], sorted_countries.values[idx::-1],
+        color=palette.cividis(idx+1) )
+ax.set_xlabel('Total', fontsize=14, fontweight="bold")
+ax.set_title('Countries that published most papers')
+
+plt.show()
 ```
 
 ```{python}
 f, ax = plt.subplots(figsize=(12, 6))
 idx = 10
+num_countries = len(sorted_countries)
 
-ax.barh(sorted_countries.index[idx:0:-1], sorted_countries.values[idx:0:-1],
+ax.barh(sorted_countries.index[num_countries-idx:num_countries],
+        sorted_countries.values[num_countries-idx:num_countries],
         color=palette.cividis(idx) )
-ax.set_xlabel('Total')
-ax.set_title('Countries that published most papers')
+ax.set_xlabel('Total', fontsize=14, fontweight="bold")
+ax.set_title('Countries that published least papers')
 
 plt.show()
 ```
@@ -338,16 +376,19 @@ plt.show()
 # GRIDSEARCH - TIME ANALYSIS
 
 def compute_time_countries(n_workers, n_partitions):
+    """
+    Executes the above steps for a given number of @n_workers and @n_partitions.
+    
+    Return: computed_time
+    """
     
     cluster = LocalCluster(n_workers = n_workers)
-    
     client = Client(cluster) 
     
     start = time.time() 
         
     PATH = os.path.join('data', 'papers_in_json', '*.json')
-    js = db.read_text(PATH).map(json.loads)
-    js = js.repartition(n_partitions)
+    js = db.read_text(PATH).map(json.loads).repartition(n_partitions)
     
     authors = js.map(reformat).flatten().to_dataframe()
     
@@ -365,24 +406,21 @@ def compute_time_countries(n_workers, n_partitions):
 ```
 
 ```{python}
-workers = [1, 2, 3, 4]
-partitions = [1, 2, 5, 10, 25, 100, 500]
+workers = [1, 2, 4, 8]
+partitions = [1, 5, 25, 50, 75, 100]
 
 times_c = []
 
-for w in workers:
-    for p in partitions:
+for w in tqdm(workers):
+    for p in tqdm(partitions):
         t = compute_time_countries(n_workers = w, n_partitions = p*w)
         times_c.append(t)
         print("Workers=", w, "Partitions=", p*w, "Time=", t,"s")
 ```
 
 ```{python}
-# times_c.append(18)
 time_plot_countries = np.array(times_c).reshape(len(workers), len(partitions))
-```
 
-```{python}
 df_times_c = pd.DataFrame(time_plot_countries)
 
 plt.figure(figsize=(12,6))
@@ -397,23 +435,40 @@ ax.set_xlabel("Partitions per worker", fontsize=14, fontweight='bold')
 plt.show()
 ```
 
+Increasing the number of workers improves the performance, and the optimal number of partitions is again found to be between $5$ and $25$.
+
 ```{python}
 # Group by institution and then count. We select the author column aribitrarly, 
 #to have just a single-column serie
 
 universities = authors.groupby('institution').author.count().compute()
 sorted_uni = universities.sort_values(ascending=False) # Sorting in descending order
+sorted_uni = sorted_uni.drop("Missing")
+```
+
+```{python}
+f, ax = plt.subplots(figsize=(12, 6))
+
+idx = 9
+
+ax.barh(sorted_uni.index[idx::-1], sorted_uni.values[idx::-1],
+        color=palette.viridis(idx+1) )
+ax.set_xlabel('Total')
+ax.set_title('Universities that published most papers')
+
+plt.show()
 ```
 
 ```{python}
 f, ax = plt.subplots(figsize=(12, 6))
 
 idx = 10
+num_uni = len(sorted_uni)
 
-ax.barh(sorted_uni.index[idx:0:-1], sorted_uni.values[idx:0:-1],
-        color=palette.viridis(idx) )
+ax.barh(sorted_uni.index[num_uni-idx:num_uni], sorted_uni.values[num_uni-idx:num_uni],
+        color=palette.viridis(idx+1) )
 ax.set_xlabel('Total')
-ax.set_title('Universities that published most papers')
+ax.set_title('Universities that published least papers')
 
 plt.show()
 ```
@@ -422,16 +477,19 @@ plt.show()
 # GRIDSEARCH - TIME ANALYSIS
 
 def compute_time_uni(n_workers, n_partitions):
+    """
+    Executes the above steps for a given number of @n_workers and @n_partitions.
+    
+    Return: computed_time
+    """
     
     cluster = LocalCluster(n_workers = n_workers)
-    
     client = Client(cluster) 
     
     start = time.time() 
         
     PATH = os.path.join('data', 'papers_in_json', '*.json')
-    js = db.read_text(PATH).map(json.loads)
-    js = js.repartition(n_partitions)
+    js = db.read_text(PATH).map(json.loads).repartition(n_partitions)
     
     authors = js.map(reformat).flatten().to_dataframe()
     
@@ -449,8 +507,8 @@ def compute_time_uni(n_workers, n_partitions):
 ```
 
 ```{python}
-workers = [1, 2, 3, 4]
-partitions = [1, 2, 5, 10, 25, 100, 500]
+workers = [1, 2, 4, 8]
+partitions = [1, 5, 25, 50, 75, 100]
 
 times_u = []
 
@@ -462,11 +520,8 @@ for w in workers:
 ```
 
 ```{python}
-times_u.append(18)
 time_plot_uni = np.array(times_u).reshape(len(workers), len(partitions))
-```
 
-```{python}
 df_times_u = pd.DataFrame(time_plot_uni)
 
 plt.figure(figsize=(12,6))
@@ -482,16 +537,7 @@ plt.show()
 ```
 
 ```{python}
-#TO DO
-# Gridsearch per i primi due punti => + Plot # DONE
-# Plot (parole più frequenti, countries and institutions with more papers) # DONE
-# Sistemare il grande numero di Missing, dovuto a diverse convenzioni # 
-# nested try except # DONE (Ancora un sacco di missing ma se i ricercatori son stupidi e 
-# non scrivono da dove vengono se lo meritano)
-# Aggiungere commenti vari
-
-#Terzo punto #Fra
-
+client.close()
 ```
 
 ## Embedding for the title of the papers
@@ -505,21 +551,34 @@ Basically the pre-trained model is more or less a huge dictionary in the followi
 To load the model, follow the snippet of code which is slightly different from what you can find at this page: https://fasttext.cc/docs/en/english-vectors.html
 
 ```{python}
-def load_vectors(fname):
-    fin = io.open(fname, ’r’, encoding=’utf-8’, newline=’\n’, errors=’ignore’)
-    n, d = map(int, fin.readline().split())
-    data = {}
+import io
+from tqdm.notebook import tqdm
+import numpy as np
+
+def load_wordlist(fname):
+    words = {}
     
-    for line in fin:
-        tokens = line.rstrip().split(’ ’)
-        data[tokens[0]] = list(map(float, tokens[1:]))
-        return data
+    with io.open(fname, 'r', encoding='utf-8', newline='\n', errors='ignore') as fin:
+        n, d = map(int, fin.readline().split())
+        # n = number of words
+        # d = vector dimension
+        
+        embeddings = np.zeros((n, d), dtype=np.float32)
+        
+        with tqdm(total=n) as pbar:
+            for i, line in enumerate(fin):
+                tokens = line.rstrip().split(' ')
+                words[tokens[0]] = i
+                embeddings[i, :] = np.array(tokens[1:], dtype=np.float32) 
+                
+                pbar.update(1)
+                
+        return words, embeddings
+```
 
-model = load_vectors(’wiki.en.vec’)
-
-#to get the embedding of word ’hello’:
-
-model[’hello’]
+```{python}
+path_to_model = "/media/einlar/Windows1/JDownloads/"
+wordlist, embeddings = load_wordlist(path_to_model + 'wiki.en.vec')
 ```
 
 Once you have downloaded the model, use the map approach to create a DataFrame or a Bag that is composed by:
@@ -528,9 +587,151 @@ Once you have downloaded the model, use the map approach to create a DataFrame o
 
 The title embedding can be a list of vectors or can be flattened to a large vector.
 
-**Bonus point**
-Use the previously generated vectors to compute the **cosine similarity** between each paper and to figure out a couple of papers with the highest cosine similairty score. This point is a bonus/optional point.
+```{python}
+from dask.distributed import Client
+import dask.bag as db
+import os
+import json
+
+client = Client(processes=False) #multithreaded mode (not multiprocessing)
+client
+```
 
 ```{python}
+PATH = os.path.join('data', 'papers_in_json', '*.json')
 
+js = db.read_text(PATH).map(json.loads)
+
+d = 300 #dimension of vectors (read from file)
+
+def get_embedding(title):
+    """
+    Given a @title, returns a matrix such that each row is the embedding vector
+    of a word in it.
+    """
+    
+    words = title.split()
+    
+    title_embedding = []
+    
+    for i, word in enumerate(title):
+        word_index = wordlist.get(word, -1)
+        
+        if word_index != -1:
+            title_embedding.append(embeddings[word_index])
+    
+    return np.array(title_embedding)
+
+def extract_title_embeddings(paper):
+    """
+    Extracts the "paper_id" and the title embedding for a given @paper.
+    """
+    
+    title = sanitize_string(paper['metadata']['title'])
+    title = title.replace("journal preproof", "")
+    
+    return {'paper_id' : paper['paper_id'], 'title-embedding' : get_embedding(title)}
+
+def extract_title(paper):
+    """
+    Extracts the "paper_id" and the title for a given @paper.
+    """
+    
+    title = sanitize_string(paper['metadata']['title'])
+    title = title.replace("journal preproof", "")
+    
+    return {'paper_id' : paper['paper_id'], 'title-embedding' : title}
+```
+
+```{python}
+titles = js.map(extract_title_embeddings)
+all_embeddings = titles.compute()
+all_embeddings 
+```
+
+**Bonus point**
+Use the previously generated vectors to compute the **cosine similarity** between each paper and to figure out a couple of papers with the highest cosine similarity score. This point is a bonus/optional point.
+
+```{python}
+def cosine_similarity(a, b):
+    return np.dot(a, b) / ( np.linalg.norm(a) * np.linalg.norm(b) )
+
+N_papers = len(all_embeddings)
+
+def get_similarities(paper):
+    """
+    Returns a vector of length N_papers with the cosine similarity between @paper and all
+    the other ones.
+    """
+    
+    a_embedding = paper["title-embedding"].flatten()
+    a_embedding_length = len(a_embedding)
+    
+    similarities = np.zeros(N_papers, dtype=np.float32)
+    
+    for i, p in enumerate(all_embeddings):
+        b_embedding = p["title-embedding"].flatten()
+        common_length = min(a_embedding_length, len(b_embedding))
+        
+        similarities[i] = cosine_similarity(a_embedding[:common_length],
+                                            b_embedding[:common_length])
+    
+    return similarities
+```
+
+```{python}
+similarities = db.from_sequence(all_embeddings).map(get_similarities)
+```
+
+```{python}
+similarities = np.array(similarities.compute()) 
+similarities[np.isnan(similarities)] = 0 #remove NaNs
+similarities[np.diag_indices(len(similarities))] = 0 #remove diagonal
+```
+
+```{python}
+fig, ax = plt.subplots(figsize=(10,10))
+
+ax.set_xlabel("Papers", fontsize=14, fontweight="bold")
+ax.set_ylabel("Papers", fontsize=14, fontweight="bold")
+ax.set_title("Cosine Similarities", fontsize=16, fontweight="bold")
+heatmap = ax.imshow(similarities, cmap='Blues')
+fig.colorbar(heatmap, ax=ax)
+
+plt.show()
+```
+
+```{python}
+all_titles = js.map(extract_title).to_dataframe().compute()
+```
+
+```{python}
+#Print some examples
+sorted_similarities = np.argsort(-similarities, axis=None) #decreasing order
+sorted_indices = np.unravel_index(sorted_similarities, similarities.shape)
+
+num = 0
+i = 0
+
+while num < 40:
+    a_ind = sorted_indices[0][i]
+    b_ind = sorted_indices[1][i]
+    i += 1
+    
+    if (a_ind < b_ind):
+        continue
+    
+    a = all_embeddings[a_ind]['paper_id']
+    b = all_embeddings[b_ind]['paper_id']
+    
+    a_title = all_titles.loc[all_titles['paper_id'] == a]['title-embedding'][0]
+    b_title = all_titles.loc[all_titles['paper_id'] == b]['title-embedding'][0]
+    
+    sim = similarities[a_ind, b_ind]
+    
+    print(num, ':')
+    print("A: {};\nB: {}\nSimilarity: {:.2f}".format(a_title, b_title, sim))
+    print('----')
+    
+    num += 1
 ```
