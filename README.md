@@ -1,2 +1,2 @@
 # MAPD-B
-Repository for Management of Physical Datasets mod B.
+Repository for Management and Analysis of Physical Datasets mod B.
